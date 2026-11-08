@@ -80,6 +80,9 @@ jobs:
           # Kernel CAF 3.18 đã backport cfg80211_disconnected 6 tham số (có locally_generated)
           sed -i 's/cfg80211_disconnected(wdev_to_ndev(wdev), reason, ie, ie_len, gfp)/cfg80211_disconnected(wdev_to_ndev(wdev), reason, ie, ie_len, locally_generated, gfp)/' os_dep/linux/ioctl_cfg80211.h
           grep -n "define rtw_cfg80211_disconnected" os_dep/linux/ioctl_cfg80211.h
+          # Kernel CAF 3.18 cũng đã backport cfg80211_vendor_event_alloc kiểu mới (có tham số wdev)
+          sed -i 's|^#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 1, 0))$|#if 0|' os_dep/linux/rtw_cfgvendor.c
+          grep -n "^#if 0" os_dep/linux/rtw_cfgvendor.c
           grep -n "0bda, *0xc811\|0xC811" -r os_dep/linux/usb_intf.c | head
 
       - name: Build module
