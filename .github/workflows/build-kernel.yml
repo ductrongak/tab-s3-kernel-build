@@ -23,6 +23,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bc bison flex libssl-dev libelf-dev make gcc-9 g++-9 \
             git cpio python3 device-tree-compiler
+          # gcc 4.9 của Lineage là script python2
+          sudo apt-get install -y python2 || true
+          command -v python2 || sudo ln -s /usr/bin/python3 /usr/bin/python2
+          python2 --version || true
 
       - name: Tải source kernel
         run: |
