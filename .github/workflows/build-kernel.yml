@@ -1,95 +1,109 @@
-name: Build kernel Tab S3 (LineageOS 18.1)
+name: Build driver WiFi RTL8821CU cho Tab S3
 
 on:
   workflow_dispatch:
     inputs:
-      kernel_branch:
-        description: "Nhánh kernel (repo awesometic, bản LineageOS 18.1 không chính thức)"
-        default: "lineage-18.1-caf"
-      defconfig:
-        description: "Tên defconfig (xem ở bước 'Liệt kê defconfig' nếu sai)"
-        default: "gts3llte_defconfig"
-      extra_config:
-        description: "Dòng config thêm, cách nhau bằng dấu | (ví dụ CONFIG_MAC80211=y|CONFIG_RT2800USB=y)"
-        default: "CONFIG_CFG80211=y|CONFIG_MAC80211=y|CONFIG_RT2X00=y|CONFIG_RT2800USB=y|CONFIG_RT2800USB_RT53XX=y"
+      kernel_ref:
+        description: "Commit/nhánh kernel (để trống = đầu nhánh lineage-18.1-caf)"
+        default: ""
+      release:
+        description: "Chuỗi phiên bản kernel đang chạy trên máy (kết quả uname -r)"
+        default: "3.18.140-awesometic-kernel-v0.12+"
+      driver_repo:
+        description: "Repo driver"
+        default: "https://github.com/morrownr/8821cu-20210916"
 
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 120
+    timeout-minutes: 90
     steps:
       - name: Cài công cụ
         run: |
           sudo apt-get update
           sudo apt-get install -y bc bison flex libssl-dev libelf-dev make gcc-9 g++-9 \
-            git cpio python3 device-tree-compiler
-          # gcc 4.9 của Lineage là script python2
+            git cpio python3 kmod
           sudo apt-get install -y python2 || true
           command -v python2 || sudo ln -s /usr/bin/python3 /usr/bin/python2
-          python2 --version || true
 
       - name: Tải source kernel
         run: |
-          git clone --depth 1 -b "${{ inputs.kernel_branch }}" \
+          git clone --filter=blob:none -b lineage-18.1-caf \
             https://github.com/awesometic/android_kernel_samsung_msm8996 kernel
+          cd kernel
+          echo "===== 15 commit gần nhất (để tìm bản v0.12) ====="
+          git log -n 15 --format='%h %ad %s' --date=short
+          if [ -n "${{ inputs.kernel_ref }}" ]; then git checkout "${{ inputs.kernel_ref }}"; fi
+          # bỏ .git để kernel không tự thêm hậu tố "+" vào phiên bản
+          rm -rf .git
 
-      - name: Tải toolchain gcc 4.9 (aarch64 + arm32)
+      - name: Tải toolchain gcc 4.9
         run: |
           git clone --depth 1 -b lineage-18.1 \
             https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 gcc64
           git clone --depth 1 -b lineage-18.1 \
             https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9 gcc32
 
-      - name: Liệt kê defconfig
-        run: ls kernel/arch/arm64/configs | grep -i -E "gts3|lineage" || ls kernel/arch/arm64/configs | head -50
-
-      - name: Cấu hình kernel
-        working-directory: kernel
-        env:
-          ARCH: arm64
-          SUBARCH: arm64
-          EXTRA: ${{ inputs.extra_config }}
-        run: |
-          export PATH="$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
-          make O=out HOSTCC=gcc-9 HOSTCXX=g++-9 CROSS_COMPILE=aarch64-linux-android- "${{ inputs.defconfig }}"
-          echo "$EXTRA" | tr '|' '\n' >> out/.config
-          make O=out HOSTCC=gcc-9 HOSTCXX=g++-9 CROSS_COMPILE=aarch64-linux-android- olddefconfig
-          echo "===== Các config quan trọng ====="
-          grep -E "CONFIG_MODULES=|CONFIG_MODVERSIONS|CONFIG_MODULE_SIG|CONFIG_CFG80211|CONFIG_MAC80211|CONFIG_RT2|CONFIG_USB_NET" out/.config || true
-
-      - name: Build kernel
+      - name: Chuẩn bị cây kernel (giữ nguyên cấu hình gốc, chỉ đổi phiên bản)
         working-directory: kernel
         env:
           ARCH: arm64
           SUBARCH: arm64
         run: |
           export PATH="$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
-          make O=out -j$(nproc) HOSTCC=gcc-9 HOSTCXX=g++-9 \
+          M="HOSTCC=gcc-9 HOSTCXX=g++-9 CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi-"
+          make O=out $M gts3llte_defconfig
+          # release nhập vào gồm cả "3.18.140", CONFIG_LOCALVERSION chỉ giữ phần hậu tố
+          python3 - <<'EOF'
+          import re
+          rel = "${{ inputs.release }}"
+          suffix = rel.replace("3.18.140", "", 1)
+          p = "out/.config"
+          s = open(p).read()
+          s = re.sub(r'^CONFIG_LOCALVERSION=.*$', 'CONFIG_LOCALVERSION="%s"' % suffix, s, flags=re.M)
+          open(p, "w").write(s)
+          EOF
+          make O=out $M olddefconfig
+          make O=out $M modules_prepare
+          echo "kernel.release = $(cat out/include/config/kernel.release)"
+          grep -E "CONFIG_(MODULES|MODVERSIONS|SMP|PREEMPT|MODULE_UNLOAD|LOCALVERSION)=" out/.config
+
+      - name: Tải driver
+        run: git clone --depth 1 "${{ inputs.driver_repo }}" drv
+
+      - name: Chỉnh Makefile driver cho ARM64
+        working-directory: drv
+        run: |
+          sed -i 's/^CONFIG_PLATFORM_I386_PC *=.*/CONFIG_PLATFORM_I386_PC = n/' Makefile
+          sed -i 's/^CONFIG_PLATFORM_ARM64_RPI *=.*/CONFIG_PLATFORM_ARM64_RPI = y/' Makefile
+          grep -nE "^CONFIG_PLATFORM_(I386_PC|ARM64_RPI)" Makefile || true
+          grep -n "0bda, *0xc811\|0xC811" -r os_dep/linux/usb_intf.c | head
+
+      - name: Build module
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+        run: |
+          export PATH="$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
+          make -C "$GITHUB_WORKSPACE/kernel" O="$GITHUB_WORKSPACE/kernel/out" \
+            M="$GITHUB_WORKSPACE/drv" ARCH=arm64 \
+            HOSTCC=gcc-9 HOSTCXX=g++-9 \
             CROSS_COMPILE=aarch64-linux-android- \
-            CROSS_COMPILE_ARM32=arm-linux-androideabi- 2>&1 | tee build.log
-          if grep -q "^CONFIG_MODULES=y" out/.config; then
-            make O=out -j$(nproc) HOSTCC=gcc-9 HOSTCXX=g++-9 \
-              CROSS_COMPILE=aarch64-linux-android- \
-              CROSS_COMPILE_ARM32=arm-linux-androideabi- modules
-          fi
+            CROSS_COMPILE_ARM32=arm-linux-androideabi- modules 2>&1 | tee build.log
 
-      - name: Gom kết quả
-        if: always()
+      - name: Kiểm tra phiên bản module
         run: |
           mkdir -p result
-          [ -d kernel ] || exit 0
-          cd kernel
-          mkdir -p ../result
-          cp out/.config ../result/config.txt 2>/dev/null || true
-          cp build.log ../result/ 2>/dev/null || true
-          cp out/arch/arm64/boot/Image* ../result/ 2>/dev/null || true
-          cp out/arch/arm64/boot/dts/*/*.dtb ../result/ 2>/dev/null || true
-          find out -name "*.ko" -exec cp {} ../result/ \; 2>/dev/null || true
-          ls -la ../result
+          cp build.log result/ || true
+          find drv -name "*.ko" -exec cp {} result/ \;
+          for f in result/*.ko; do
+            echo "== $f"; modinfo "$f" | grep -E "vermagic|alias.*0bda.*c811|depends" || true
+          done
+          ls -la result
 
       - name: Tải lên kết quả
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: kernel-tab-s3
+          name: wifi-driver-tab-s3
           path: result/
