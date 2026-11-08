@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       kernel_branch:
-        description: "Nhánh kernel"
-        default: "lineage-18.1"
+        description: "Nhánh kernel (repo awesometic, bản LineageOS 18.1 không chính thức)"
+        default: "lineage-18.1-caf"
       defconfig:
         description: "Tên defconfig (xem ở bước 'Liệt kê defconfig' nếu sai)"
         default: "lineage_gts3llte_defconfig"
@@ -27,7 +27,7 @@ jobs:
       - name: Tải source kernel
         run: |
           git clone --depth 1 -b "${{ inputs.kernel_branch }}" \
-            https://github.com/LineageOS/android_kernel_samsung_msm8996 kernel
+            https://github.com/awesometic/android_kernel_samsung_msm8996 kernel
 
       - name: Tải toolchain gcc 4.9 (aarch64 + arm32)
         run: |
@@ -71,8 +71,10 @@ jobs:
 
       - name: Gom kết quả
         if: always()
-        working-directory: kernel
         run: |
+          mkdir -p result
+          [ -d kernel ] || exit 0
+          cd kernel
           mkdir -p ../result
           cp out/.config ../result/config.txt 2>/dev/null || true
           cp build.log ../result/ 2>/dev/null || true
