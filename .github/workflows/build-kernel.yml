@@ -1,0 +1,89 @@
+name: Build kernel Tab S3 (LineageOS 18.1)
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_branch:
+        description: "Nhánh kernel"
+        default: "lineage-18.1"
+      defconfig:
+        description: "Tên defconfig (xem ở bước 'Liệt kê defconfig' nếu sai)"
+        default: "lineage_gts3llte_defconfig"
+      extra_config:
+        description: "Dòng config thêm, cách nhau bằng dấu | (ví dụ CONFIG_MAC80211=y|CONFIG_RT2800USB=y)"
+        default: "CONFIG_CFG80211=y|CONFIG_MAC80211=y|CONFIG_RT2X00=y|CONFIG_RT2800USB=y|CONFIG_RT2800USB_RT53XX=y"
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - name: Cài công cụ
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison flex libssl-dev libelf-dev make gcc-9 g++-9 \
+            git cpio python3 device-tree-compiler
+
+      - name: Tải source kernel
+        run: |
+          git clone --depth 1 -b "${{ inputs.kernel_branch }}" \
+            https://github.com/LineageOS/android_kernel_samsung_msm8996 kernel
+
+      - name: Tải toolchain gcc 4.9 (aarch64 + arm32)
+        run: |
+          git clone --depth 1 -b lineage-18.1 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 gcc64
+          git clone --depth 1 -b lineage-18.1 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9 gcc32
+
+      - name: Liệt kê defconfig
+        run: ls kernel/arch/arm64/configs | grep -i -E "gts3|lineage" || ls kernel/arch/arm64/configs | head -50
+
+      - name: Cấu hình kernel
+        working-directory: kernel
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          EXTRA: ${{ inputs.extra_config }}
+        run: |
+          export PATH="$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
+          make O=out HOSTCC=gcc-9 HOSTCXX=g++-9 CROSS_COMPILE=aarch64-linux-android- "${{ inputs.defconfig }}"
+          echo "$EXTRA" | tr '|' '\n' >> out/.config
+          make O=out HOSTCC=gcc-9 HOSTCXX=g++-9 CROSS_COMPILE=aarch64-linux-android- olddefconfig
+          echo "===== Các config quan trọng ====="
+          grep -E "CONFIG_MODULES=|CONFIG_MODVERSIONS|CONFIG_MODULE_SIG|CONFIG_CFG80211|CONFIG_MAC80211|CONFIG_RT2|CONFIG_USB_NET" out/.config || true
+
+      - name: Build kernel
+        working-directory: kernel
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+        run: |
+          export PATH="$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
+          make O=out -j$(nproc) HOSTCC=gcc-9 HOSTCXX=g++-9 \
+            CROSS_COMPILE=aarch64-linux-android- \
+            CROSS_COMPILE_ARM32=arm-linux-androideabi- 2>&1 | tee build.log
+          if grep -q "^CONFIG_MODULES=y" out/.config; then
+            make O=out -j$(nproc) HOSTCC=gcc-9 HOSTCXX=g++-9 \
+              CROSS_COMPILE=aarch64-linux-android- \
+              CROSS_COMPILE_ARM32=arm-linux-androideabi- modules
+          fi
+
+      - name: Gom kết quả
+        if: always()
+        working-directory: kernel
+        run: |
+          mkdir -p ../result
+          cp out/.config ../result/config.txt 2>/dev/null || true
+          cp build.log ../result/ 2>/dev/null || true
+          cp out/arch/arm64/boot/Image* ../result/ 2>/dev/null || true
+          cp out/arch/arm64/boot/dts/*/*.dtb ../result/ 2>/dev/null || true
+          find out -name "*.ko" -exec cp {} ../result/ \; 2>/dev/null || true
+          ls -la ../result
+
+      - name: Tải lên kết quả
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-tab-s3
+          path: result/
