@@ -77,6 +77,9 @@ jobs:
           sed -i 's/^CONFIG_PLATFORM_I386_PC *=.*/CONFIG_PLATFORM_I386_PC = n/' Makefile
           sed -i 's/^CONFIG_PLATFORM_ARM64_RPI *=.*/CONFIG_PLATFORM_ARM64_RPI = y/' Makefile
           grep -nE "^CONFIG_PLATFORM_(I386_PC|ARM64_RPI)" Makefile || true
+          # Kernel CAF 3.18 đã backport cfg80211_disconnected 6 tham số (có locally_generated)
+          sed -i 's/cfg80211_disconnected(wdev_to_ndev(wdev), reason, ie, ie_len, gfp)/cfg80211_disconnected(wdev_to_ndev(wdev), reason, ie, ie_len, locally_generated, gfp)/' os_dep/linux/ioctl_cfg80211.h
+          grep -n "define rtw_cfg80211_disconnected" os_dep/linux/ioctl_cfg80211.h
           grep -n "0bda, *0xc811\|0xC811" -r os_dep/linux/usb_intf.c | head
 
       - name: Build module
@@ -89,7 +92,7 @@ jobs:
             M="$GITHUB_WORKSPACE/drv" ARCH=arm64 \
             HOSTCC=gcc-9 HOSTCXX=g++-9 \
             CROSS_COMPILE=aarch64-linux-android- \
-            CROSS_COMPILE_ARM32=arm-linux-androideabi- modules 2>&1 | tee build.log
+            CROSS_COMPILE_ARM32=arm-linux-androideabi- -k modules 2>&1 | tee build.log
 
       - name: Kiểm tra phiên bản module
         run: |
