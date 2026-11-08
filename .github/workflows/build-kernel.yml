@@ -88,7 +88,7 @@ jobs:
           SUBARCH: arm64
         run: |
           export PATH="$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
-          make -C "$GITHUB_WORKSPACE/kernel" O="$GITHUB_WORKSPACE/kernel/out" \
+          make -j"$(nproc)" -C "$GITHUB_WORKSPACE/kernel" O="$GITHUB_WORKSPACE/kernel/out" \
             M="$GITHUB_WORKSPACE/drv" ARCH=arm64 \
             HOSTCC=gcc-9 HOSTCXX=g++-9 \
             CROSS_COMPILE=aarch64-linux-android- \
